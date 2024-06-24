@@ -1,10 +1,10 @@
 from flask import request, jsonify, Blueprint
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
-
 from logger import Logger
 from .models import db, User, Website, MonitoredWebsite, MonitoredArea, Change
 from werkzeug.security import generate_password_hash, check_password_hash
 import re
+import validators
 
 from .monitor import detect_changes
 
@@ -54,13 +54,37 @@ def login_user():
 def add_website():
     current_user_id = get_jwt_identity()
     data = request.get_json()
-    new_website = Website(url=data['url'], name=data['name'])
+    url = data['url']
+
+    if not url.startswith(('http://', 'https://')):
+        url = 'http://' + url
+    new_website = Website(url=url, name=data['name'])
+    if not validators.url(new_website.url):
+        return jsonify({'message': 'Invalid URL'}), 400
+
     db.session.add(new_website)
     db.session.commit()
+    area_selector = data.get('selector')  # Use get so it returns None if the selector is not provided
+    new_monitored_area = MonitoredArea(area_selector=area_selector)  # Change 'selector' to 'area_selector'
+    db.session.add(new_monitored_area)
+    db.session.commit()
     new_monitored_website = MonitoredWebsite(user_id=current_user_id, website_id=new_website.id,
+                                             area_id=new_monitored_area.id,
                                              time_interval=data.get('time_interval', 60))
     db.session.add(new_monitored_website)
     db.session.commit()
+
+    # Set the first Change with the current view of the page
+    change_detected, current_snapshot = detect_changes(new_website.url, area_selector)
+    new_change = Change(
+        monitored_area_id=new_monitored_area.id,
+        change_snapshot="",  # You might want to save the actual HTML content here
+        change_summary="Initial snapshot",
+        screenshot=current_snapshot
+    )
+    db.session.add(new_change)
+    db.session.commit()
+
     return jsonify({'message': 'Website added'}), 201
 
 
@@ -68,53 +92,18 @@ def add_website():
 @jwt_required()
 def get_websites():
     current_user_id = get_jwt_identity()
-    monitored_websites = MonitoredWebsite.query.filter_by(user_id=current_user_id).all()
+    monitored_websites = db.session.query(MonitoredWebsite, Website).join(Website, MonitoredWebsite.website_id == Website.id).filter(MonitoredWebsite.user_id == current_user_id).all()
     websites = [
         {
-            'id': mw.website.id,
-            'url': mw.website.url,
-            'name': mw.website.name,
-            'time_interval': mw.time_interval
+            'id': mw.Website.id,
+            'url': mw.Website.url,
+            'name': mw.Website.name,
+            'time_interval': mw.MonitoredWebsite.time_interval
         }
         for mw in monitored_websites
     ]
     return jsonify(websites), 200
 
-
-@views.route('/monitor', methods=['POST'])
-@jwt_required()
-def monitor_site():
-    current_user_id = get_jwt_identity()
-    data = request.get_json()
-    monitored_website = MonitoredWebsite.query.filter_by(user_id=current_user_id, website_id=data['website_id']).first()
-    if not monitored_website:
-        return jsonify({'message': 'Website not found or not authorized'}), 404
-
-    url = monitored_website.website.url
-    selector = data.get('selector')
-    monitored_area = MonitoredArea.query.filter_by(id=data['area_id']).first()
-
-    if not monitored_area:
-        return jsonify({'message': 'Monitored area not found'}), 404
-
-    last_change = Change.query.filter_by(monitored_area_id=monitored_area.id).order_by(
-        Change.change_detected_at.desc()).first()
-    last_snapshot = last_change.screenshot if last_change else None
-
-    change_detected, current_snapshot = detect_changes(url, selector, last_snapshot)
-
-    if change_detected:
-        new_change = Change(
-            monitored_area_id=monitored_area.id,
-            change_snapshot="",  # Potresti voler salvare il contenuto HTML effettivo qui
-            change_summary="Change detected",
-            screenshot=current_snapshot
-        )
-        db.session.add(new_change)
-        db.session.commit()
-        return jsonify({'message': 'Change detected', 'screenshot': 'path/to/screenshot'}), 200
-    else:
-        return jsonify({'message': 'No change detected'}), 200
 
 
 @views.route('/changes', methods=['GET'])
