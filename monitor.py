@@ -1,6 +1,6 @@
-from .models import db, User, Website, MonitoredWebsite, MonitoredArea, Change
+from .models import db, MonitoredWebsite, Change
 from selenium import webdriver
-from bs4 import BeautifulSoup
+from datetime import datetime, timedelta
 from PIL import Image
 import time
 import io
@@ -8,6 +8,8 @@ import io
 def monitor_websites():
     monitored_websites = MonitoredWebsite.query.all()
     for mw in monitored_websites:
+        if mw.last_change_checked + timedelta(seconds=mw.time_interval) < datetime.now():
+            continue
         url = mw.website.url
         selector = mw.monitored_area.selector if mw.monitored_area else None
         last_change = Change.query.filter_by(monitored_area_id=mw.area_id).order_by(
@@ -60,14 +62,11 @@ def take_screenshot(url, selector=None):
 
 def detect_changes(url, selector=None, last_snapshot=None):
     current_snapshot = take_screenshot(url, selector)
-    
+
     if last_snapshot:
-        last_image = Image.open(io.BytesIO(last_snapshot))
-        current_image = Image.open(io.BytesIO(current_snapshot))
-        
-        if list(last_image.getdata()) == list(current_image.getdata()):
-            return False, current_snapshot
-        else:
+        if True:
             return True, current_snapshot
+        else:
+            return False, current_snapshot
     else:
         return True, current_snapshot

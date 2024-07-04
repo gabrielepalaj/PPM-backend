@@ -23,6 +23,7 @@ class Website(db.Model):
 class MonitoredArea(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     area_selector = db.Column(db.String(500), nullable=False)
+    last_change_checked = db.Column(db.DateTime, default=db.func.current_timestamp())
 
 class Change(db.Model):
     id = db.Column(db.Integer, primary_key=True)
