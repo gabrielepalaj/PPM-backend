@@ -10,6 +10,19 @@ from .monitor import detect_changes
 
 views = Blueprint('views', __name__)
 
+def getIdJWT():
+    return get_jwt_identity()["id"]
+
+def getUsernameJWT():
+    return get_jwt_identity()["username"]
+
+def JWTIdentity(user):
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email
+    }
+
 
 @views.route('/register', methods=['POST'])
 def register_user():
@@ -35,16 +48,8 @@ def register_user():
     Logger.getInstance().log(f"New user: {new_user}")
     db.session.add(new_user)
     db.session.commit()
-    access_token = create_access_token(identity=new_user.id)
+    access_token = create_access_token(identity=JWTIdentity(new_user))
     return jsonify(access_token=access_token), 201
-
-
-@views.route('/refresh', methods=['POST'])
-@jwt_required(refresh=True)
-def refresh():
-    current_user_id = get_jwt_identity()
-    new_access_token = create_access_token(identity=current_user_id)
-    return jsonify(access_token=new_access_token), 200
 
 
 @views.route('/login', methods=['POST'])
@@ -52,7 +57,7 @@ def login_user():
     data = request.get_json()
     user = User.query.filter_by(username=data['username']).first()
     if user and check_password_hash(user.password, data['password']):
-        access_token = create_access_token(identity=user.id)
+        access_token = create_access_token(identity=JWTIdentity(user))
         return jsonify(access_token=access_token), 200
     return jsonify({'message': 'Invalid credentials'}), 401
 
@@ -60,7 +65,7 @@ def login_user():
 @views.route('/websites', methods=['POST'])
 @jwt_required()
 def add_website():
-    current_user_id = get_jwt_identity()
+    current_user_id = getIdJWT()
     data = request.get_json()
     url = data['url']
 
@@ -99,7 +104,7 @@ def add_website():
 @views.route('/websites', methods=['GET'])
 @jwt_required()
 def get_websites():
-    current_user_id = get_jwt_identity()
+    current_user_id = getIdJWT()
     monitored_websites = db.session.query(MonitoredWebsite, Website).join(Website, MonitoredWebsite.website_id == Website.id).filter(MonitoredWebsite.user_id == current_user_id).all()
     websites = [
         {
@@ -117,7 +122,7 @@ def get_websites():
 @views.route('/changes', methods=['GET'])
 @jwt_required()
 def get_changes():
-    current_user_id = get_jwt_identity()
+    current_user_id = getIdJWT()
     monitored_websites = MonitoredWebsite.query.filter_by(user_id=current_user_id).all()
     area_ids = [mw.area_id for mw in monitored_websites if mw.area_id]
     changes = Change.query.filter(Change.monitored_area_id.in_(area_ids)).all()
@@ -138,5 +143,5 @@ def get_changes():
 @views.route('/verify', methods=['POST'])
 @jwt_required()
 def verify():
-    current_user_id = get_jwt_identity()
+    current_user_id = getIdJWT()
     return jsonify({"msg": "Token is valid", "user_id": current_user_id}), 200
