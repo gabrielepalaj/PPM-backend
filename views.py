@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from flask import request, jsonify, Blueprint
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from logger import Logger
@@ -68,30 +70,49 @@ def add_website():
     current_user_id = getIdJWT()
     data = request.get_json()
     url = data['url']
+    name = data.get('name')
+    area_selector = data.get('selector')
+    time_interval = data.get('time_interval', 60)
 
     if not url.startswith(('http://', 'https://')):
         url = 'http://' + url
-    new_website = Website(url=url, name=data['name'])
+
+    existing_monitored_website = db.session.query(MonitoredWebsite).join(Website).filter(
+        MonitoredWebsite.user_id == current_user_id,
+        Website.url == url,
+        MonitoredArea.area_selector == area_selector
+    ).first()
+    if existing_monitored_website:
+        return jsonify({'message': 'You are already monitoring this URL with the selected area'}), 400
+
+    existing_website_name = db.session.query(MonitoredWebsite).join(Website).filter(
+        MonitoredWebsite.user_id == current_user_id,
+        Website.name == name
+    ).first()
+    if existing_website_name:
+        return jsonify({'message': 'You are already monitoring a website with this name'}), 400
+
+
+    new_website = Website(url=url, name=name)
     if not validators.url(new_website.url):
         return jsonify({'message': 'Invalid URL'}), 400
 
     db.session.add(new_website)
     db.session.commit()
-    area_selector = data.get('selector')  # Use get so it returns None if the selector is not provided
-    new_monitored_area = MonitoredArea(area_selector=area_selector)  # Change 'selector' to 'area_selector'
+
+    new_monitored_area = MonitoredArea(area_selector=area_selector)
     db.session.add(new_monitored_area)
     db.session.commit()
+
     new_monitored_website = MonitoredWebsite(user_id=current_user_id, website_id=new_website.id,
-                                             area_id=new_monitored_area.id,
-                                             time_interval=data.get('time_interval', 60))
+                                             area_id=new_monitored_area.id, time_interval=time_interval)
     db.session.add(new_monitored_website)
     db.session.commit()
 
-    # Set the first Change with the current view of the page
     change_detected, current_snapshot = detect_changes(new_website.url, area_selector)
     new_change = Change(
         monitored_area_id=new_monitored_area.id,
-        change_snapshot="",  # You might want to save the actual HTML content here
+        change_snapshot="",
         change_summary="Initial snapshot",
         screenshot=current_snapshot
     )
