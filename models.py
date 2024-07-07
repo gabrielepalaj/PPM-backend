@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from . import db
 
 class User(db.Model):
@@ -19,9 +21,15 @@ class MonitoredArea(db.Model):
     name = db.Column(db.String(100), nullable=False)
     area_selector = db.Column(db.String(500), nullable=False)
     time_interval = db.Column(db.Integer, nullable=False, default=60)
-    last_change_checked = db.Column(db.DateTime, default=db.func.current_timestamp())
+    last_change_checked = db.Column(db.DateTime)
 
     website = db.relationship('Website', backref=db.backref('monitored_areas', lazy=True))
+
+    def __init__(self, **kwargs):
+        super(MonitoredArea, self).__init__(**kwargs)
+        if not self.last_change_checked:
+            self.last_change_checked = datetime.now() - timedelta(minutes=self.time_interval)
+
 
 class Change(db.Model):
     id = db.Column(db.Integer, primary_key=True)

@@ -9,6 +9,8 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from flask import current_app
 from .models import db, Change, MonitoredArea
+from logger import Logger
+
 
 def async_monitor(app):
     with app.app_context():
@@ -18,18 +20,35 @@ def async_monitor(app):
             for ma in monitored_areas:
                 last_check = ma.last_change_checked if ma.last_change_checked else ma.created_at
                 if now - last_check >= timedelta(minutes=ma.time_interval):
+                    Logger.getInstance().log(f"Checking {ma.website.url}")
                     change_detected, current_snapshot = detect_changes(ma.website.url, ma.area_selector)
-                    if change_detected or not Change.query.filter_by(monitored_area_id=ma.id).first():
-                        new_change = Change(monitored_area_id=ma.id, change_snapshot="", change_summary="Change detected", screenshot=current_snapshot)
+                    existing_change = Change.query.filter_by(monitored_area_id=ma.id).first()
+                    if change_detected or not existing_change:
+                        change_summary = "First screenshot" if not existing_change else "Change detected"
+                        new_change = Change(monitored_area_id=ma.id, change_snapshot="", change_summary=change_summary, screenshot=current_snapshot)
                         db.session.add(new_change)
+                        try:
+                            db.session.commit()
+                            Logger.getInstance().log(f"New change detected for {ma.website.url}")
+                        except Exception as e:
+                            db.session.rollback()
+                            Logger.getInstance().log(f"Error adding new change: {e}")
+                    ma.last_change_checked = now
+                    try:
                         db.session.commit()
+                    except Exception as e:
+                        db.session.rollback()
+                        Logger.getInstance().log(f"Error updating last check time: {e}")
             time.sleep(60)
 
 def start_async_monitor():
+    print("Starting monitor thread")
     app = current_app._get_current_object()
     monitor_thread = Thread(target=async_monitor, args=(app,))
     monitor_thread.daemon = True
     monitor_thread.start()
+    print("Monitor thread started")
+
 
 def accept_cookies(driver):
     try:
@@ -93,9 +112,8 @@ def detect_changes(url, selector=None, last_snapshot=None):
     current_snapshot = take_screenshot(url, selector)
 
     if last_snapshot:
-        if current_snapshot != last_snapshot:  # Replace with actual comparison logic
+        if current_snapshot:
             return True, current_snapshot
-        else:
-            return False, current_snapshot
+        return False, current_snapshot
     else:
         return True, current_snapshot
