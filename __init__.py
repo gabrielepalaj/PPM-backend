@@ -18,6 +18,8 @@ def create_app():
         from . import views
         db.create_all()
         app.register_blueprint(views.views)
+        from .monitor import start_async_monitor
+        start_async_monitor()
         print(app.url_map)
 
-        return app
+    return app

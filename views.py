@@ -1,9 +1,12 @@
 from datetime import datetime
 
+import requests
 from flask import request, jsonify, Blueprint
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from sqlalchemy.exc import SQLAlchemyError
+
 from logger import Logger
-from .models import db, User, Website, MonitoredWebsite, MonitoredArea, Change
+from .models import db, User, Website, MonitoredArea, Change
 from werkzeug.security import generate_password_hash, check_password_hash
 import re
 import validators
@@ -74,78 +77,86 @@ def add_website():
     area_selector = data.get('selector')
     time_interval = data.get('time_interval', 60)
 
-    if not url.startswith(('http://', 'https://')):
-        url = 'http://' + url
+    try:
+        if not url.startswith(('http://', 'https://')):
+            url = 'http://' + url
 
-    existing_monitored_website = db.session.query(MonitoredWebsite).join(Website).filter(
-        MonitoredWebsite.user_id == current_user_id,
-        Website.url == url,
-        MonitoredArea.area_selector == area_selector
-    ).first()
-    if existing_monitored_website:
-        return jsonify({'message': 'You are already monitoring this URL with the selected area'}), 400
+        # Controllo se il sito è già monitorato
+        existing_website = Website.query.filter_by(url=url).first()
+        if existing_website:
+            if MonitoredArea.query.filter_by(user_id=current_user_id, website_id=existing_website.id).first():
+                return jsonify({'message': 'You are already monitoring this website'}), 400
 
-    existing_website_name = db.session.query(MonitoredWebsite).join(Website).filter(
-        MonitoredWebsite.user_id == current_user_id,
-        Website.name == name
-    ).first()
-    if existing_website_name:
-        return jsonify({'message': 'You are already monitoring a website with this name'}), 400
+        # Controllo se il sito è già monitorato dall'utente
+        if MonitoredArea.query.filter_by(user_id=current_user_id, name=name).first():
+            return jsonify({'message': 'You are already using this name for another monitored area'}), 400
 
+        # Controllo se il sito web esiste davvero
+        try:
+            response = requests.head(url)
+            if response.status_code >= 400:
+                return jsonify({'message': 'Website does not exist or is not accessible'}), 400
+        except requests.RequestException:
+            return jsonify({'message': 'Website does not exist or is not accessible'}), 400
 
-    new_website = Website(url=url, name=name)
-    if not validators.url(new_website.url):
-        return jsonify({'message': 'Invalid URL'}), 400
+        if not validators.url(url):
+            return jsonify({'message': 'Invalid URL'}), 400
 
-    db.session.add(new_website)
-    db.session.commit()
+        existing_website = Website.query.filter_by(url=url).first()
+        if existing_website:
+            website = existing_website
+        else:
+            website = Website(url=url)
+            db.session.add(website)
+        website_id = Website.query.filter_by(url=url).first().id
 
-    new_monitored_area = MonitoredArea(area_selector=area_selector)
-    db.session.add(new_monitored_area)
-    db.session.commit()
+        # Crea l'area monitorata
+        new_monitored_area = MonitoredArea(
+            user_id=current_user_id,
+            website_id=website.id,
+            name=name,
+            area_selector=area_selector,
+            time_interval=time_interval
+        )
+        db.session.add(new_monitored_area)
 
-    new_monitored_website = MonitoredWebsite(user_id=current_user_id, website_id=new_website.id,
-                                             area_id=new_monitored_area.id, time_interval=time_interval)
-    db.session.add(new_monitored_website)
-    db.session.commit()
+        db.session.commit()
 
-    change_detected, current_snapshot = detect_changes(new_website.url, area_selector)
-    new_change = Change(
-        monitored_area_id=new_monitored_area.id,
-        change_snapshot="",
-        change_summary="Initial snapshot",
-        screenshot=current_snapshot
-    )
-    db.session.add(new_change)
-    db.session.commit()
-
-    return jsonify({'message': 'Website added'}), 201
+        return jsonify({'message': 'Website and monitored area added'}), 201
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        return jsonify({'message': 'Database error', 'error': str(e)}), 500
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'An error occurred', 'error': str(e)}), 500
 
 
 @views.route('/websites', methods=['GET'])
 @jwt_required()
 def get_websites():
     current_user_id = getIdJWT()
-    monitored_websites = db.session.query(MonitoredWebsite, Website).join(Website, MonitoredWebsite.website_id == Website.id).filter(MonitoredWebsite.user_id == current_user_id).all()
+    monitored_areas = db.session.query(MonitoredArea).join(Website, MonitoredArea.website_id == Website.id).filter(MonitoredArea.user_id == current_user_id).all()
     websites = [
         {
-            'id': mw.Website.id,
-            'url': mw.Website.url,
-            'name': mw.Website.name,
-            'time_interval': mw.MonitoredWebsite.time_interval
+            'id': ma.id,
+            'url': ma.website.url,
+            'name': ma.name,
+            'time_interval': ma.time_interval
         }
-        for mw in monitored_websites
+        for ma in monitored_areas
     ]
     return jsonify(websites), 200
-
 
 
 @views.route('/changes', methods=['GET'])
 @jwt_required()
 def get_changes():
     current_user_id = getIdJWT()
-    monitored_websites = MonitoredWebsite.query.filter_by(user_id=current_user_id).all()
-    area_ids = [mw.area_id for mw in monitored_websites if mw.area_id]
+    monitored_areas = MonitoredArea.query.filter_by(user_id=current_user_id).all()
+    area_ids = [ma.id for ma in monitored_areas]
     changes = Change.query.filter(Change.monitored_area_id.in_(area_ids)).all()
     changes_list = [
         {
@@ -165,4 +176,7 @@ def get_changes():
 @jwt_required()
 def verify():
     current_user_id = getIdJWT()
+    if not User.query.filter_by(id=current_user_id).first():
+        return jsonify({'message': 'User not found'}), 404
+
     return jsonify({"msg": "Token is valid", "user_id": current_user_id}), 200

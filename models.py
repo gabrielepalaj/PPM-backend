@@ -7,23 +7,21 @@ class User(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
-class MonitoredWebsite(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    website_id = db.Column(db.Integer, db.ForeignKey('website.id'), nullable=False)
-    area_id = db.Column(db.Integer, db.ForeignKey('monitored_area.id'))
-    time_interval = db.Column(db.Integer, nullable=False, default=60)
-
 class Website(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    url = db.Column(db.String(200), nullable=False)
-    name = db.Column(db.String(100))
+    url = db.Column(db.String(200), unique=True, nullable=False)
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
 class MonitoredArea(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    website_id = db.Column(db.Integer, db.ForeignKey('website.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
     area_selector = db.Column(db.String(500), nullable=False)
+    time_interval = db.Column(db.Integer, nullable=False, default=60)
     last_change_checked = db.Column(db.DateTime, default=db.func.current_timestamp())
+
+    website = db.relationship('Website', backref=db.backref('monitored_areas', lazy=True))
 
 class Change(db.Model):
     id = db.Column(db.Integer, primary_key=True)
