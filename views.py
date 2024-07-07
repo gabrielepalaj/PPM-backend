@@ -28,7 +28,6 @@ def JWTIdentity(user):
         "email": user.email
     }
 
-
 @views.route('/register', methods=['POST'])
 def register_user():
     data = request.get_json()
@@ -45,8 +44,7 @@ def register_user():
         return jsonify({'message': 'Email already exists'}), 400
 
     if not re.match(r'^(?=.*[A-Z])(?=.*\W).{8,}$', password):
-        return jsonify({
-            'message': 'Password debole'}), 400
+        return jsonify({'message': 'Weak password'}), 400
 
     hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
     new_user = User(username=username, password=hashed_password, email=email)
@@ -55,7 +53,6 @@ def register_user():
     db.session.commit()
     access_token = create_access_token(identity=JWTIdentity(new_user))
     return jsonify(access_token=access_token), 201
-
 
 @views.route('/login', methods=['POST'])
 def login_user():
@@ -66,30 +63,16 @@ def login_user():
         return jsonify(access_token=access_token), 200
     return jsonify({'message': 'Invalid credentials'}), 401
 
+def check_new_website(userId, name, url):
 
-@views.route('/websites', methods=['POST'])
-@jwt_required()
-def add_website():
-    current_user_id = getIdJWT()
-    data = request.get_json()
-    url = data['url']
-    name = data.get('name')
-    area_selector = data.get('selector')
-    time_interval = data.get('time_interval', 60)
-
-    try:
+    # Controllo se il sito è già monitorato
+    if url != '':
         if not url.startswith(('http://', 'https://')):
             url = 'http://' + url
-
-        # Controllo se il sito è già monitorato
         existing_website = Website.query.filter_by(url=url).first()
         if existing_website:
-            if MonitoredArea.query.filter_by(user_id=current_user_id, website_id=existing_website.id).first():
+            if MonitoredArea.query.filter_by(user_id=userId, website_id=existing_website.id).first():
                 return jsonify({'message': 'You are already monitoring this website'}), 400
-
-        # Controllo se il sito è già monitorato dall'utente
-        if MonitoredArea.query.filter_by(user_id=current_user_id, name=name).first():
-            return jsonify({'message': 'You are already using this name for another monitored area'}), 400
 
         # Controllo se il sito web esiste davvero
         try:
@@ -102,13 +85,35 @@ def add_website():
         if not validators.url(url):
             return jsonify({'message': 'Invalid URL'}), 400
 
+    # Controllo se il sito è già monitorato dall'utente
+    if name != '':
+        if MonitoredArea.query.filter_by(user_id=userId, name=name).first():
+            return jsonify({'message': 'You are already using this name for another monitored area'}), 400
+
+    return '', 200
+
+@views.route('/websites', methods=['POST'])
+@jwt_required()
+def add_website():
+    current_user_id = getIdJWT()
+    data = request.get_json()
+    url = data['url']
+    name = data.get('name')
+    area_selector = data.get('selector')
+    time_interval = data.get('time_interval', 60)
+
+    try:
+        error, status = check_new_website(current_user_id, name, url)
+        if error != '':
+            return error, status
+
         existing_website = Website.query.filter_by(url=url).first()
-        if existing_website:
-            website = existing_website
-        else:
+        if not existing_website:
             website = Website(url=url)
             db.session.add(website)
-        website_id = Website.query.filter_by(url=url).first().id
+            db.session.commit()
+        else:
+            website = existing_website
 
         # Crea l'area monitorata
         new_monitored_area = MonitoredArea(
@@ -119,7 +124,6 @@ def add_website():
             time_interval=time_interval
         )
         db.session.add(new_monitored_area)
-
         db.session.commit()
 
         return jsonify({'message': 'Website and monitored area added'}), 201
@@ -134,6 +138,69 @@ def add_website():
         return jsonify({'message': 'An error occurred', 'error': str(e)}), 500
 
 
+@views.route('/websites/<int:monitoredarea_id>', methods=['PUT'])
+@jwt_required()
+def update_website(monitoredarea_id):
+    current_user_id = getIdJWT()
+    data = request.get_json()
+    name = data.get('name', '')
+    url = data.get('url', '')
+    area_selector = data.get('selector', '')
+    time_interval = data.get('time_interval', 60)
+
+    try:
+        monitored_area = MonitoredArea.query.filter_by(id=monitoredarea_id, user_id=current_user_id).first()
+        if not monitored_area:
+            return jsonify({'message': 'Monitored area not found'}), 404
+
+        if monitored_area.website.url == url:
+            url = ''
+        if monitored_area.name == name:
+            name = ''
+
+        error, status = check_new_website(current_user_id, name, url)
+        if error != '':
+            return error, status
+
+        if name != '':
+            monitored_area.name = name
+        if url != '':
+            monitored_area.website.url = url
+
+        db.session.commit()
+
+        return jsonify({'message': 'Monitored area updated successfully'}), 200
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        return jsonify({'message': 'Database error', 'error': str(e)}), 500
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify({'message': str(e)}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'An error occurred', 'error': str(e)}), 500
+
+
+@views.route('/websites/<int:monitoredarea_id>', methods=['DELETE'])
+@jwt_required()
+def delete_website(monitoredarea_id):
+    current_user_id = getIdJWT()
+    try:
+        monitored_area = MonitoredArea.query.filter_by(id=monitoredarea_id, user_id=current_user_id).first()
+        if not monitored_area:
+            return jsonify({'message': 'Monitored area not found'}), 404
+
+        db.session.delete(monitored_area)
+        db.session.commit()
+
+        return jsonify({'message': 'Monitored area deleted successfully'}), 200
+    except SQLAlchemyError as e:
+        db.session.rollback()
+        return jsonify({'message': 'Database error', 'error': str(e)}), 500
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'message': 'An error occurred', 'error': str(e)}), 500
+
 @views.route('/websites', methods=['GET'])
 @jwt_required()
 def get_websites():
@@ -144,12 +211,13 @@ def get_websites():
             'id': ma.id,
             'url': ma.website.url,
             'name': ma.name,
-            'time_interval': ma.time_interval
+            'time_interval': ma.time_interval,
+            'last_change': db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).first().change_detected_at,
+            'previous_change': db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).offset(1).first().change_detected_at if db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).offset(1).first() else None
         }
         for ma in monitored_areas
     ]
     return jsonify(websites), 200
-
 
 @views.route('/changes', methods=['GET'])
 @jwt_required()
@@ -169,8 +237,6 @@ def get_changes():
         for change in changes
     ]
     return jsonify(changes_list), 200
-
-
 
 @views.route('/verify', methods=['POST'])
 @jwt_required()
