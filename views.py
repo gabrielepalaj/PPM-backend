@@ -11,7 +11,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import re
 import validators
 
-from .monitor import detect_changes
 
 views = Blueprint('views', __name__)
 
@@ -68,7 +67,7 @@ def check_new_website(userId, name, url):
     # Controllo se il sito è già monitorato
     if url != '':
         if not url.startswith(('http://', 'https://')):
-            url = 'http://' + url
+            url = 'https://' + url
         existing_website = Website.query.filter_by(url=url).first()
         if existing_website:
             if MonitoredArea.query.filter_by(user_id=userId, website_id=existing_website.id).first():
@@ -77,7 +76,7 @@ def check_new_website(userId, name, url):
         # Controllo se il sito web esiste davvero
         try:
             response = requests.head(url)
-            if response.status_code >= 400:
+            if response.status_code <200 or response.status_code >= 300:
                 return jsonify({'message': 'Website does not exist or is not accessible'}), 400
         except requests.RequestException:
             return jsonify({'message': 'Website does not exist or is not accessible'}), 400
@@ -212,12 +211,23 @@ def get_websites():
             'url': ma.website.url,
             'name': ma.name,
             'time_interval': ma.time_interval,
-            'last_change': db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).first().change_detected_at,
-            'previous_change': db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).offset(1).first().change_detected_at if db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).offset(1).first() else None
+            'last_change': db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).first(),
         }
         for ma in monitored_areas
     ]
     return jsonify(websites), 200
+
+@views.route('/changes/<int:change_id>/read', methods=['POST'])
+@jwt_required()
+def mark_change_as_read(change_id):
+    current_user_id = getIdJWT()
+    change = Change.query.filter_by(id=change_id).join(MonitoredArea).filter(MonitoredArea.user_id == current_user_id).first()
+    if not change:
+        return jsonify({'message': 'Change not found'}), 404
+
+    change.read = True
+    db.session.commit()
+    return jsonify({'message': 'Change marked as read'}), 200
 
 @views.route('/changes', methods=['GET'])
 @jwt_required()
