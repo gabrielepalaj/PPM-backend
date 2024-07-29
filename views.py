@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime
 
 import requests
@@ -200,18 +201,35 @@ def delete_website(monitoredarea_id):
         db.session.rollback()
         return jsonify({'message': 'An error occurred', 'error': str(e)}), 500
 
+
 @views.route('/websites', methods=['GET'])
 @jwt_required()
 def get_websites():
     current_user_id = getIdJWT()
-    monitored_areas = db.session.query(MonitoredArea).join(Website, MonitoredArea.website_id == Website.id).filter(MonitoredArea.user_id == current_user_id).all()
+    monitored_areas = db.session.query(MonitoredArea).join(Website, MonitoredArea.website_id == Website.id).filter(
+        MonitoredArea.user_id == current_user_id).all()
+
+    def change_to_dict(change):
+        if change is None:
+            return None
+        return {
+            'id': change.id,
+            'monitored_area_id': change.monitored_area_id,
+            'change_detected_at': change.change_detected_at.isoformat(),
+            'change_snapshot': change.change_snapshot,
+            'change_summary': change.change_summary,
+            'screenshot': base64.b64encode(change.screenshot).decode('utf-8') if change.screenshot else None,
+            'reviewed': change.reviewed
+        }
+
     websites = [
         {
             'id': ma.id,
             'url': ma.website.url,
             'name': ma.name,
             'time_interval': ma.time_interval,
-            'last_change': db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(Change.change_detected_at.desc()).first(),
+            'last_change': change_to_dict(db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(
+                Change.change_detected_at.desc()).first()),
         }
         for ma in monitored_areas
     ]
@@ -256,3 +274,7 @@ def verify():
         return jsonify({'message': 'User not found'}), 404
 
     return jsonify({"msg": "Token is valid", "user_id": current_user_id}), 200
+
+@views.route('/health', methods=['GET'])
+def health():
+    return jsonify({"msg": "OK"}), 200
