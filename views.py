@@ -230,6 +230,8 @@ def get_websites():
             'time_interval': ma.time_interval,
             'last_change': change_to_dict(db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(
                 Change.change_detected_at.desc()).first()),
+            'previous_change': change_to_dict(db.session.query(Change).filter_by(monitored_area_id=ma.id).order_by(
+                Change.change_detected_at.desc()).offset(1).first())
         }
         for ma in monitored_areas
     ]
@@ -243,7 +245,7 @@ def mark_change_as_read(change_id):
     if not change:
         return jsonify({'message': 'Change not found'}), 404
 
-    change.read = True
+    change.reviewed = True
     db.session.commit()
     return jsonify({'message': 'Change marked as read'}), 200
 
