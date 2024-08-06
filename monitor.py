@@ -58,49 +58,34 @@ def save_image_to_disk(image_bytes, filename):
 
 def compare_images(img1_path, img2_path):
     try:
-        # Read the images from the file paths
         img1 = cv2.imread(img1_path)
         img2 = cv2.imread(img2_path)
 
         if img1 is None or img2 is None:
             raise ValueError("One of the images could not be loaded. Please check the paths.")
 
-        # Convert images to grayscale
         img1_gray = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY)
         img2_gray = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY)
 
-        # Ensure the dimensions of both images are the same
         if img1_gray.shape != img2_gray.shape:
             img2_gray = cv2.resize(img2_gray, (img1_gray.shape[1], img1_gray.shape[0]))
 
-        # Convert to numpy arrays and ensure they are float32
         img1_array = np.array(img1_gray, dtype=np.float32)
         img2_array = np.array(img2_gray, dtype=np.float32)
 
-        # Normalize the arrays manually
         img1_array = (img1_array - np.min(img1_array)) / (np.max(img1_array) - np.min(img1_array))
         img2_array = (img2_array - np.min(img2_array)) / (np.max(img2_array) - np.min(img2_array))
 
-        # Compute SSIM
         ssim_score = ssim(img1_array, img2_array, data_range=1.0)
 
-        # Compute the difference image
         diff = cv2.absdiff(img1_gray, img2_gray)
-
-        # Calculate percentage of changed pixels
-        num_pixels = img1_gray.size
-        changed_pixels = np.count_nonzero(diff)
-
-        # Log the results
         Logger.getInstance().log(f"SSIM Score: {ssim_score}")
 
-        # Convert numpy arrays back to PIL Images
         img1_pil = Image.fromarray(cv2.cvtColor(img1, cv2.COLOR_BGR2RGB))
         img2_pil = Image.fromarray(cv2.cvtColor(img2, cv2.COLOR_BGR2RGB))
         diff_pil = Image.fromarray(diff)
 
-        # Determine if a change was detected based on SSIM and percentage difference
-        change_detected = ssim_score < 0.92
+        change_detected = ssim_score < 0.85
 
         return change_detected, {
             'before': img1_pil,
