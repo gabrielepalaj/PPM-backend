@@ -32,6 +32,9 @@ def take_screenshot(url):
     options.add_argument('--headless')
     options.add_argument('--no-sandbox')
     options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--window-size=1920,1080')
+
     driver = webdriver.Chrome(options=options)
 
     try:
@@ -149,8 +152,8 @@ def async_monitor(app):
                                 db.session.commit()
                                 Logger.getInstance().log(f"New change detected for {ma.website.url}")
 
-                                if change_detected and last_changed and diff_images:
-                                    save_differences(last_changed.id, new_change.id, diff_images)
+                                #if change_detected and last_changed and diff_images:
+                                #    save_differences(last_changed.id, new_change.id, diff_images)
 
                             except Exception as e:
                                 db.session.rollback()

@@ -1,17 +1,20 @@
 import base64
-from datetime import datetime
-
-import requests
+import socket
 from flask import request, jsonify, Blueprint
 from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
 from sqlalchemy.exc import SQLAlchemyError
-
-from logger import Logger
 from .models import db, User, Website, MonitoredArea, Change
 from werkzeug.security import generate_password_hash, check_password_hash
 import re
-import validators
-
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.common.exceptions import WebDriverException, TimeoutException
+from validators import url as validate_url
+from .models import Website, MonitoredArea
+from .logger import Logger
+import requests
+from urllib.parse import urlparse
+import time
 
 views = Blueprint('views', __name__)
 
@@ -63,35 +66,56 @@ def login_user():
         return jsonify(access_token=access_token), 200
     return jsonify({'message': 'Invalid credentials'}), 401
 
-def check_new_website(userId, name, url):
-
-    # Controllo se il sito è già monitorato
-    if url != '':
+def check_new_website(user_id, name, url):
+    if url:
+        # Normalizza l'URL
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
-        existing_website = Website.query.filter_by(url=url).first()
-        if existing_website:
-            if MonitoredArea.query.filter_by(user_id=userId, website_id=existing_website.id).first():
-                return jsonify({'message': 'You are already monitoring this website'}), 400
 
-        # Controllo se il sito web esiste davvero
-        try:
-            response = requests.head(url)
-            if response.status_code <200 or response.status_code >= 300:
-                return jsonify({'message': 'Website does not exist or is not accessible'}), 400
-        except requests.RequestException:
-            return jsonify({'message': 'Website does not exist or is not accessible'}), 400
-
-        if not validators.url(url):
+        # Valida l'URL
+        if not validate_url(url):
             return jsonify({'message': 'Invalid URL'}), 400
 
-    # Controllo se il sito è già monitorato dall'utente
-    if name != '':
-        if MonitoredArea.query.filter_by(user_id=userId, name=name).first():
-            return jsonify({'message': 'You are already using this name for another monitored area'}), 400
+        # Controlla se il dominio è valido
+        parsed_url = urlparse(url)
+        try:
+            socket.gethostbyname(parsed_url.netloc)
+        except socket.gaierror:
+            return jsonify({'message': 'Invalid domain'}), 400
+
+        # Controlla se il sito è già monitorato dall'utente
+        existing_website = Website.query.filter_by(url=url).first()
+        if existing_website and MonitoredArea.query.filter_by(user_id=user_id, website_id=existing_website.id).first():
+            return jsonify({'message': 'You are already monitoring this website'}), 400
+
+        # Configura le opzioni di Chrome
+        options = webdriver.ChromeOptions()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--window-size=1920,1080')
+
+        try:
+            with webdriver.Chrome(options=options) as driver:
+                driver.set_page_load_timeout(5)
+                driver.get(url)
+                time.sleep(2)
+
+                # Verifica se la pagina è stata caricata correttamente
+                if "This site can't be reached" in driver.title or "Access Denied" in driver.page_source:
+                    raise WebDriverException("Page couldn't be loaded")
+
+                # Se arriviamo qui, il sito è accessibile
+        except (WebDriverException, TimeoutException) as e:
+            Logger.getInstance().log(f"URL access denied or timed out: {str(e)}")
+            return jsonify({'message': 'Website does not exist or is not accessible'}), 400
+
+    # Controlla se il nome è già utilizzato dall'utente
+    if name and MonitoredArea.query.filter_by(user_id=user_id, name=name).first():
+        return jsonify({'message': 'You are already using this name for another monitored area'}), 400
 
     return '', 200
-
 @views.route('/websites', methods=['POST'])
 @jwt_required()
 def add_website():
