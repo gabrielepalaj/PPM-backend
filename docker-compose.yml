@@ -1,0 +1,51 @@
+version: '3'
+
+services:
+  # Database PostgreSQL
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: webmonitor
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - app-network 
+
+  # Backend
+  backend:
+    build:
+      context: ./backend
+    environment:
+      FLASK_ENV: production
+      DATABASE_URL: postgresql://root:password@db:5432/webmonitor
+    volumes:
+      - ./backend:/app
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
+    networks:
+      - app-network
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "5173:80"  # Almeno ho il frontend direttamente su http://localhost
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+
+# Questo file deve essere spostato in una directory con backend e frontend come sottodirectory
+# per il deploy eseguire docker-compose up --build
